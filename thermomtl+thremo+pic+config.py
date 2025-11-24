@@ -13,14 +13,14 @@ from torchmetrics.functional.regression import r2_score, mean_absolute_error
 from astartes.molecules import train_val_test_split_molecules
 from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import TensorBoardLogger
-from fastprop.model import train_and_test
-from fastprop.metrics import SCORE_LOOKUP
-from fastprop.descriptors import get_descriptors
-from fastprop.defaults import ALL_2D
-from fastprop.io import load_saved_descriptors
-from fastprop.io import read_input_csv
-from fastprop.model import MultiTaskRegressor, MultiTask_PINNloss, MultiTask_PINN_config
-from fastprop.data import fastpropDataLoader, fastpropDataset, standard_scale
+from ThermoMTLnet.model import train_and_test
+from ThermoMTLnet.metrics import SCORE_LOOKUP
+from ThermoMTLnet.descriptors import get_descriptors
+from ThermoMTLnet.defaults import ALL_2D
+from ThermoMTLnet.io import load_saved_descriptors
+from ThermoMTLnet.io import read_input_csv
+from ThermoMTLnet.model import MultiTaskRegressor, MultiTask_PINNloss, MultiTask_PINN_config
+from ThermoMTLnet.data import fastpropDataLoader, fastpropDataset, standard_scale
 
 target_names = {
     "Enthalpy": "Enthalpy",
