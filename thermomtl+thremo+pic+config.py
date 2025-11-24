@@ -45,30 +45,24 @@ else:
         list(map(MolFromSmiles, smiles)),
     ).to_numpy(dtype=np.float32)
 
-# 去nan
 cols_with_nan = np.isnan(descriptors).any(axis=0)
 descriptors = descriptors[:, ~cols_with_nan]
 print(f"descriptors_nonan.shape: {descriptors.shape}")
 
-# 去除常数列
 constant_columns = np.all(descriptors == descriptors[0, :], axis=0)
 num_true_columns = np.sum(constant_columns)
 descriptors = descriptors[:, ~constant_columns]
 print(f"descriptors_noconstant.shape: {descriptors.shape}")
 
-# PCC
 descriptors_df = pd.DataFrame(descriptors)
 correlation_matrix = descriptors_df.corr(method='pearson')
 # Dropping correlation with high correlation, 0.6 0.7 0.8 0.9 0.92 0.95 0.98 0.99
 threshold = 0.99
 high_correlation_pairs = (correlation_matrix > threshold).sum() - 1
 to_drop_descriptors = [column for column in correlation_matrix.columns if high_correlation_pairs[column] > 0]
-# descriptors = descriptors_df.drop(columns=to_drop_descriptors).to_numpy()
 descriptors = descriptors_df.drop(columns=to_drop_descriptors)
 print(f"descriptors_pcc.shape: {descriptors.shape}")
 
-# 特征降维
-# MI
 def calculate_feature_importance(descriptors, targets, target_names):
     """
     Calculate MIC and mutual information for each feature-target pair.
@@ -83,11 +77,10 @@ def calculate_feature_importance(descriptors, targets, target_names):
     """
     results = {}
 
-    # 获取任务名称列表（字典的键）
     task_names = list(target_names.keys())
 
     for task_num in range(targets.shape[1]):
-        task_name = task_names[task_num]  # 获取对应的任务名称
+        task_name = task_names[task_num]  
         task_mask = ~np.isnan(targets[:, task_num])
         X_task = descriptors.iloc[task_mask]
         y_task = targets[task_mask, task_num]
@@ -104,7 +97,6 @@ def calculate_feature_importance(descriptors, targets, target_names):
     return results
 
 def select_important_features(results, percentile=70):
-    """选择在MI的最高百分位数中打分的特征。在 SHAP 分析阶段，我们仅基于该降冗后的特征集进行解释，并通过多次随机采样重复 SHAP 计算，以验证特征重要性排序的稳定性。结果表明，残余相关性对 SHAP 值的影响极小，不会造成误导性解释。因此，所展示的 SHAP 结果可以较为可靠地反映模型的真实决策依据。, 80, 70, 60, 50"""
     important_features = {}
 
     for task_name, task_results in results.items():
@@ -122,19 +114,15 @@ def select_important_features(results, percentile=70):
 
     return important_features
 
-# MI
 feature_importance_results = calculate_feature_importance(descriptors, targets, target_names)
 important_features = select_important_features(feature_importance_results)
 all_important_features = set()
 for features in important_features.values():
     all_important_features.update(features)
 print(f"\n所有任务中的独特重要特征总数: {len(all_important_features)}")
-# 创建一个只包含重要特征的新描述符矩阵
 descriptors = descriptors[list(all_important_features)].to_numpy()
 print(f"descriptors_MI.shape: {descriptors.shape}")
 
-
-# 拼接描述符
 cache_file2 = "../mutitask/handmade/theromo_newdescriptors_with_derived_features.csv"
 descriptors2 = load_saved_descriptors(cache_file2)
 descriptors = np.hstack([descriptors2, descriptors])
@@ -152,14 +140,11 @@ def calculate_mean_scores(results_list, tasks=4):
     means = []
     for task_idx in range(tasks):
         task_key = f"test_r_score_task{task_idx}"
-        # 提取所有折叠中该任务的分数
         task_scores = [result[task_key] for result in results_list]
-        # 计算均值
         mean = sum(task_scores) / len(task_scores)
         means.append(mean)
     return means
 
-# 数据加载和模型实例化
 def create_loaders_and_models(descriptors, targets, train_indexes, val_indexes, test_indexes):
 
     # re-scale the features and the targets
@@ -199,7 +184,6 @@ def create_loaders_and_models(descriptors, targets, train_indexes, val_indexes, 
     )
     return baseline_model, real_model, train_dataloader, val_dataloader, test_dataloader
 
-# 交叉验证
 def cross_validate_fastprop(
     smiles_arr: np.ndarray,
     descriptors_arr: np.ndarray,
@@ -248,22 +232,18 @@ def cross_validate_fastprop(
     return pred, truth
 
 def plot_parity_plots(y_true, y_pred, target_names, save_path=None):
-    y_pred = y_pred.cpu().numpy()  # 确保数据在CPU上再转换
+    y_pred = y_pred.cpu().numpy() 
     y_true = y_true.cpu().numpy()
     n_tasks = y_true.shape[1]
     task_keys = list(target_names.keys())
 
-    # 创建单个图形
     plt.figure(figsize=(8, 8))
 
-    # 定义颜色列表（可根据需要修改）
     colors = ['steelblue', 'coral', 'mediumseagreen', 'goldenrod']
 
-    # 计算全局最小最大值以统一坐标轴
     global_min = np.inf
     global_max = -np.inf
 
-    # 第一遍循环：确定坐标轴范围
     for i in range(n_tasks):
         mask = ~(np.isnan(y_true[:, i]) | np.isnan(y_pred[:, i]))
         true_vals = y_true[mask, i]
@@ -275,7 +255,6 @@ def plot_parity_plots(y_true, y_pred, target_names, save_path=None):
             global_min = min(global_min, current_min)
             global_max = max(global_max, current_max)
 
-    # 绘制所有任务的数据点
     for i in range(n_tasks):
         mask = ~(np.isnan(y_true[:, i]) | np.isnan(y_pred[:, i]))
         true_vals = y_true[mask, i]
@@ -285,17 +264,13 @@ def plot_parity_plots(y_true, y_pred, target_names, save_path=None):
             plt.scatter(true_vals, pred_vals, alpha=0.6, s=20,
                         color=colors[i], label=task_keys[i])
 
-    # # 绘制对角线
     plt.plot([global_min, global_max], [global_min, global_max])
 
-    # 设置图形属性
     plt.xlabel('True Values')
     plt.ylabel('Predicted Values')
-    # plt.title('多任务预测效果对比图')
     plt.legend()
     plt.grid(True, alpha=0.3)
 
-    # 使图形为正方形
     plt.gca().set_aspect('equal', adjustable='box')
 
     if save_path:
@@ -303,9 +278,7 @@ def plot_parity_plots(y_true, y_pred, target_names, save_path=None):
 
     plt.show()
 
-# 在任务上拟合模型
-# if __name__ == "__main__":
-# 对所有目标任务，选出都有值的行（完全非 NaN）
+
 task_mask = ~np.isnan(targets).any(axis=1)
 print(f"过滤后的样本数: {np.sum(task_mask)}")
 print(f"每个任务的有效样本数:")
@@ -317,7 +290,6 @@ print(f"targets shape: {targets.shape}")
 print(f"targets中NaN的比例: {np.isnan(targets).mean():.2%}")
 descriptors = descriptors.astype(np.float32)
 
-# 交叉验证多任务模型
 pred, truth = cross_validate_fastprop(
     smiles_arr=smiles[task_mask],
     descriptors_arr=descriptors[task_mask, :],
@@ -352,6 +324,6 @@ table = tabulate(
 print(table)
 
 
-# plot_parity_plots(truth, pred, target_names, save_path='parity_plots.png')
+plot_parity_plots(truth, pred, target_names, save_path='parity_plots.png')
 
 
