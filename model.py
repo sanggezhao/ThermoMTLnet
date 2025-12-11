@@ -64,6 +64,11 @@ class MultiTask_PINN_config(pl.LightningModule):
         feature_vars: Optional[torch.Tensor] = None,
         target_means: Optional[torch.Tensor] = None,
         target_vars: Optional[torch.Tensor] = None,
+        # 新增早停相关参数
+        early_stopping_patience: int = 5,
+        early_stopping_monitor: str = "validation_mse_scaled_loss",
+        early_stopping_mode: str = "min",
+        early_stopping_min_delta: float = 0.0,
     ):
         super().__init__()
         self.n_tasks = num_tasks
@@ -72,13 +77,19 @@ class MultiTask_PINN_config(pl.LightningModule):
         self.register_buffer("target_means", target_means)
         self.register_buffer("target_vars", target_vars)
         self.problem_type = problem_type
-        self.training_metric = fastprop.get_metric(problem_type)
+        self.training_metric = self.get_metric(problem_type)  
         self.learning_rate = learning_rate
         self.target_names = target_names
-        self.num_samples=num_samples,
+        self.num_samples = num_samples
         self.lambda_SH = 0.4  
         self.lambda_comb = 0.3  
         self.lambda_expl = 0.3  
+        
+        # 早停参数
+        self.early_stopping_patience = early_stopping_patience
+        self.early_stopping_monitor = early_stopping_monitor
+        self.early_stopping_mode = early_stopping_mode
+        self.early_stopping_min_delta = early_stopping_min_delta
 
         layers = OrderedDict()
         if clamp_input:
@@ -87,21 +98,9 @@ class MultiTask_PINN_config(pl.LightningModule):
             layers[f"lin{i+1}"] = torch.nn.Linear(input_size if i == 0 else hidden_size, hidden_size)
             if fnn_layers == 1 or i < (fnn_layers - 1):
                 layers[f"act{i+1}"] = torch.nn.ReLU()
-                # layers[f"act{i+1}"] = torch.nn.LeakyReLU(negative_slope=0.01) 
-                # layers[f"act{i + 1}"] = torch.nn.Tanh()
-                # layers[f"act{i + 1}"] = torch.nn.PReLU(init=0.25)
         self.fnn = torch.nn.Sequential(layers)
-        self.readout = torch.nn.Linear(hidden_size, readout_size)  # 修改输出层
-
+        self.readout = torch.nn.Linear(hidden_size, readout_size) 
         self.save_hyperparameters()
-
-    # def configure_optimizers(self):
-    #     """See https://lightning.ai/docs/pytorch/stable/common/optimization.html
-    #
-    #     Returns:
-    #         dict: Optimizer name and instance.
-    #     """
-    #     return {"optimizer": torch.optim.Adam(self.parameters(), lr=self.learning_rate, betas=(0.9, 0.999))}
 
     def configure_optimizers(self):
         import adabound  
@@ -123,6 +122,7 @@ class MultiTask_PINN_config(pl.LightningModule):
             if len(self.target_names) == 0:
                 self.target_names = [f"task_{i}" for i in range(self.n_tasks)]
 
+    @staticmethod
     def get_metric(problem_type: str):
         """Get the metric for training and early stopping based on the problem type.
 
@@ -201,8 +201,8 @@ class MultiTask_PINN_config(pl.LightningModule):
             return torch.nn.functional.softmax(logits, dim=1)
 
     def physics_loss_SH(self, pred: torch.Tensor, temperature: float = 298.15):
-        H = pred[:, self.target_names.index("Enthalpy")]  # 焓
-        S = pred[:, self.target_names.index("Entropy")]  # 熵
+        H = pred[:, self.target_names.index("Enthalpy")]  
+        S = pred[:, self.target_names.index("Entropy")]  
         return torch.mean((H - temperature * S) ** 2)
 
     def physics_loss_comb(self, pred: torch.Tensor, alpha=1.0, beta=0.0):
@@ -237,15 +237,6 @@ class MultiTask_PINN_config(pl.LightningModule):
                         self.lambda_expl * L_physics_expl
                 )
                 loss += L_physics  # L_total = L_data + L_physics
-        # elif self.problem_type in {"multilabel", "binary"}:
-        #     for i in range(self.n_tasks):
-        #         task_loss = torch.nn.functional.binary_cross_entropy_with_logits(y_hat[:, i], y[:, i], reduction="mean")
-        #         loss += task_loss
-        # else:
-        #     for i in range(self.n_tasks):
-        #         y_pred = torch.softmax(y_hat[:, i], dim=1)
-        #         task_loss = torch.nn.functional.kl_div(y_pred.log(), y.float(), reduction="batchmean")
-        #         loss += task_loss
         return loss, y_hat  
 
     def _human_loss(self, pred, batch, name):
@@ -290,32 +281,52 @@ class MultiTask_PINN_config(pl.LightningModule):
                     self.log(f"{name}_{target}_{metric.__name__}", value)
 
 
+def get_early_stopping_callback(model: MultiTask_PINN_config, patience: Optional[int] = None):
+
+    if patience is None:
+        patience = model.early_stopping_patience
+    
+    return EarlyStopping(
+        monitor=model.early_stopping_monitor,
+        mode=model.early_stopping_mode,
+        patience=patience,
+        min_delta=model.early_stopping_min_delta,
+        verbose=True,
+        check_finite=True,
+        stopping_threshold=None, 
+        divergence_threshold=None,  
+        check_on_train_epoch_end=False, 
+    )
+
+
 def train_and_test(
     output_directory: str,
-    fastprop_model: MultiTask_PINNloss,
+    fastprop_model: MultiTask_PINN_config, 
     train_dataloader: fastpropDataLoader,
     val_dataloader: fastpropDataLoader,
     test_dataloader: fastpropDataLoader,
     number_epochs: int = 30,
-    patience: int = 5,
+    patience: int = None, 
     quiet: bool = False,
+    enable_early_stopping: bool = True,  
     **trainer_kwargs,
 ):
     """Run a single train/validate and test iteration.
 
     Args:
         output_directory (str): Filepath to write logs and checkpoints.
-        fastprop_model (fastprop): fastprop LightningModule instance.
+        fastprop_model (MultiTask_PINN_config): fastprop LightningModule instance.
         train_dataloader (fastpropDataLoader): Training data.
         val_dataloader (fastpropDataLoader): Validation data.
         test_dataloader (fastpropDataLoader): Testing data.
         number_epochs (int, optional): Maximum number of epochs for training. Defaults to 30.
-        patience (int, optional): Number of epochs for early stopping. Defaults to 5.
+        patience (int, optional): Number of epochs for early stopping. Defaults to None (使用模型默认值).
         quiet (bool, optional): Set True to disable some printing. Default to False.
+        enable_early_stopping (bool, optional): Whether to enable early stopping. Defaults to True.
         trainer_kwargs (dict, optional): Additional arguments to pass the the pl.Trainer
 
     Returns:
-        list[dict]: Lightning model output.
+        tuple: (test_results, validation_results, best_model_path)
     """
     try:
         repetition_number = len(os.listdir(os.path.join(output_directory, "tensorboard_logs"))) + 1
@@ -328,21 +339,26 @@ def train_and_test(
         default_hp_metric=False,
     )
 
-    callbacks = [
-        EarlyStopping(
-            monitor=f"validation_{fastprop_model.training_metric}_scaled_loss",
-            mode="min",
-            verbose=False,
-            patience=patience,
-        ),
-        ModelCheckpoint(
-            monitor=f"validation_{fastprop_model.training_metric}_scaled_loss",
-            dirpath=os.path.join(output_directory, "checkpoints"),
-            filename=f"repetition-{repetition_number}" + "-{epoch:02d}-{val_loss:.2f}",
-            save_top_k=1,
-            mode="min",
-        ),
-    ]
+    callbacks = []
+    
+    checkpoint_callback = ModelCheckpoint(
+        monitor=f"validation_{fastprop_model.training_metric}_scaled_loss",
+        dirpath=os.path.join(output_directory, "checkpoints"),
+        filename=f"repetition-{repetition_number}" + "-{epoch:02d}-{val_loss:.2f}",
+        save_top_k=1,
+        mode="min",
+        save_last=True,  
+        verbose=True,
+    )
+    callbacks.append(checkpoint_callback)
+    
+    if enable_early_stopping:
+        early_stop_callback = get_early_stopping_callback(fastprop_model, patience)
+        callbacks.append(early_stop_callback)
+    
+    from pytorch_lightning.callbacks import LearningRateMonitor
+    lr_monitor = LearningRateMonitor(logging_interval='epoch')
+    callbacks.append(lr_monitor)
 
     trainer = pl.Trainer(
         max_epochs=number_epochs,
@@ -357,17 +373,63 @@ def train_and_test(
     )
 
     t1_start = perf_counter()
+    
     trainer.fit(fastprop_model, train_dataloader, val_dataloader)
+    
     t1_stop = perf_counter()
     logger.info("Elapsed time during training: " + str(datetime.timedelta(seconds=t1_stop - t1_start)))
-    ckpt_path = trainer.checkpoint_callback.best_model_path
-    logger.info(f"Reloading best model from checkpoint file: {ckpt_path}")
-    fastprop_model = fastprop_model.__class__.load_from_checkpoint(ckpt_path)
+    
+    if enable_early_stopping and early_stop_callback.stopped_epoch > 0:
+        logger.info(f"Early stopping triggered at epoch {early_stop_callback.stopped_epoch}")
+        logger.info(f"Best validation score: {early_stop_callback.best_score:.4f}")
+    
+    ckpt_path = checkpoint_callback.best_model_path
+    if ckpt_path: 
+        logger.info(f"Reloading best model from checkpoint file: {ckpt_path}")
+        fastprop_model = fastprop_model.__class__.load_from_checkpoint(ckpt_path)
+    else:
+        logger.warning("No checkpoint found. Using the last model.")
+    
     validation_results = trainer.validate(fastprop_model, val_dataloader, verbose=False)
     test_results = trainer.test(fastprop_model, test_dataloader, verbose=False)
+    
     validation_results_df = pd.DataFrame.from_records(validation_results, index=("value",))
-    logger.info("Displaying validation results for repetition %d:\n%s", repetition_number, validation_results_df.transpose().to_string())
+    logger.info("Displaying validation results for repetition %d:\n%s", 
+                repetition_number, validation_results_df.transpose().to_string())
+    
     test_results_df = pd.DataFrame.from_records(test_results, index=("value",))
-    logger.info("Displaying validation results for repetition %d:\n%s", repetition_number, test_results_df.transpose().to_string())
-    return test_results, validation_results
+    logger.info("Displaying test results for repetition %d:\n%s", 
+                repetition_number, test_results_df.transpose().to_string())
+    
+    return test_results, validation_results, ckpt_path
 
+
+class AdaptiveEarlyStopping(EarlyStopping):
+    """自适应早停策略，可以根据验证损失的变化动态调整耐心值"""
+    
+    def __init__(self, *args, min_patience=3, max_patience=20, improvement_threshold=0.001, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.min_patience = min_patience
+        self.max_patience = max_patience
+        self.improvement_threshold = improvement_threshold
+        self.best_loss = float('inf')
+        self.epochs_since_improvement = 0
+        
+    def on_validation_end(self, trainer, pl_module):
+        current = trainer.callback_metrics.get(self.monitor)
+        
+        if current is None:
+            return
+            
+        if self.monitor_op(current, self.best_loss):
+            improvement = abs(self.best_loss - current) / self.best_loss
+            if improvement > self.improvement_threshold:
+                self.patience = max(self.min_patience, min(self.patience + 2, self.max_patience))
+                logger.info(f"Significant improvement ({improvement:.4%}), increasing patience to {self.patience}")
+            self.best_loss = current.item()
+            self.epochs_since_improvement = 0
+        else:
+            self.epochs_since_improvement += 1
+            logger.info(f"No improvement for {self.epochs_since_improvement} epochs")
+            
+        super().on_validation_end(trainer, pl_module)
