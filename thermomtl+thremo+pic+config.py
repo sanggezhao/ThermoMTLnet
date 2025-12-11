@@ -103,10 +103,8 @@ def select_important_features(results, percentile=70):
         mi_scores = task_results['Mutual_Information']
         descriptors = task_results['Descriptors']
 
-        # 计算阈值
         mi_threshold = np.percentile(mi_scores, percentile)
 
-        # 获取重要特征
         important_mask = mi_scores > mi_threshold
         important_descriptors = descriptors[important_mask]
 
@@ -119,7 +117,7 @@ important_features = select_important_features(feature_importance_results)
 all_important_features = set()
 for features in important_features.values():
     all_important_features.update(features)
-print(f"\n所有任务中的独特重要特征总数: {len(all_important_features)}")
+print(f"\n {len(all_important_features)}")
 descriptors = descriptors[list(all_important_features)].to_numpy()
 print(f"descriptors_MI.shape: {descriptors.shape}")
 
@@ -136,7 +134,6 @@ SCORE_LOOKUP["regression"] = (r_score,) + SCORE_LOOKUP["regression"]
 
 
 def calculate_mean_scores(results_list, tasks=4):
-    """计算指定任务的平均分数，等效于pandas的describe().loc['mean']"""
     means = []
     for task_idx in range(tasks):
         task_key = f"test_r_score_task{task_idx}"
@@ -280,14 +277,10 @@ def plot_parity_plots(y_true, y_pred, target_names, save_path=None):
 
 
 task_mask = ~np.isnan(targets).any(axis=1)
-print(f"过滤后的样本数: {np.sum(task_mask)}")
-print(f"每个任务的有效样本数:")
 for i, name in enumerate(target_names.keys()):
     valid_count = np.sum(~np.isnan(targets[task_mask, i]))
     print(f"  {name}: {valid_count}")
 
-print(f"targets shape: {targets.shape}")
-print(f"targets中NaN的比例: {np.isnan(targets).mean():.2%}")
 descriptors = descriptors.astype(np.float32)
 
 pred, truth = cross_validate_fastprop(
