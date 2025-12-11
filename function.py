@@ -1,5 +1,5 @@
 """
-sanggezhao's function
+function
 """
 import torch
 from torchmetrics.functional.regression import pearson_corrcoef
@@ -13,22 +13,17 @@ from fastprop.model import train_and_test
 from astartes.molecules import train_val_test_split_molecules
 
 def calculate_mean_scores(results_list, tasks=4):
-    """计算指定任务的平均分数，等效于pandas的describe().loc['mean']"""
     means = []
     for task_idx in range(tasks):
         task_key = f"test_r_score_task{task_idx}"
-        # 提取所有折叠中该任务的分数
         task_scores = [result[task_key] for result in results_list]
-        # 计算均值
         mean = sum(task_scores) / len(task_scores)
         means.append(mean)
     return means
 
 
-# 数据加载和模型实例化
 def create_loaders_and_models(descriptors, targets, train_indexes, val_indexes, test_indexes):
 
-    # re-scale the features and the targets
     descriptors[train_indexes], feature_means, feature_vars = standard_scale(descriptors[train_indexes])
     descriptors[val_indexes] = standard_scale(descriptors[val_indexes], feature_means, feature_vars)
     descriptors[test_indexes] = standard_scale(descriptors[test_indexes], feature_means, feature_vars)
@@ -36,12 +31,10 @@ def create_loaders_and_models(descriptors, targets, train_indexes, val_indexes, 
     targets[val_indexes] = standard_scale(targets[val_indexes], targets_means, targets_vars)
     targets[test_indexes] = standard_scale(targets[test_indexes], targets_means, targets_vars)
 
-    # initialize dataloaders and model, then train
     train_dataloader = fastpropDataLoader(fastpropDataset(descriptors[train_indexes], targets[train_indexes]), shuffle=True, batch_size=32)
     val_dataloader = fastpropDataLoader(fastpropDataset(descriptors[val_indexes], targets[val_indexes]), batch_size=128)
     test_dataloader = fastpropDataLoader(fastpropDataset(descriptors[test_indexes], targets[test_indexes]), batch_size=1024)
 
-    # train a linear baseline _and_ a 'real' model
     baseline_model = MultiTask_PINNloss(
         fnn_layers=0,
         hidden_size=350,
@@ -139,7 +132,6 @@ def cross_validate_fastprop(
     )
 
 
-# 重复训练
 def replicate_fastprop(
     smiles_arr: np.ndarray,
     descriptors_arr: np.ndarray,
@@ -164,17 +156,15 @@ def replicate_fastprop(
             return_indices=True,
         )
 
-        # 判断验证集数量是否大于2，若小于2跳过本次训练
         val_targets = targets[val_indexes]
         test_targets = targets[test_indexes]
 
-        # 检查非NaN数目
         valid_val_samples = (~torch.isnan(val_targets)).sum(dim=0)
         valid_test_samples = (~torch.isnan(test_targets)).sum(dim=0)
 
         if (valid_val_samples < 2).any() or (valid_test_samples < 2).any():
             print(f"Skip i={i}, insufficient samples in val/test.")
-            continue  # 跳过当前轮次
+            continue  
 
         baseline_model, real_model, train_dataloader, val_dataloader, test_dataloader = create_loaders_and_models(
             descriptors, targets, train_indexes, val_indexes, test_indexes
@@ -183,7 +173,6 @@ def replicate_fastprop(
         baseline_results.append(test_results[0])
         test_results, validation_results = train_and_test(outdir, real_model, train_dataloader, val_dataloader, test_dataloader, quiet=True)
         fastprop_results.append(test_results[0])
-        # 计算所有任务的平均得分
     return (
         calculate_mean_scores(fastprop_results, num_tasks),
         calculate_mean_scores(baseline_results, num_tasks),
