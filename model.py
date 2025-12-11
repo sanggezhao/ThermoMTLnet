@@ -64,7 +64,6 @@ class MultiTask_PINN_config(pl.LightningModule):
         feature_vars: Optional[torch.Tensor] = None,
         target_means: Optional[torch.Tensor] = None,
         target_vars: Optional[torch.Tensor] = None,
-        # 新增早停相关参数
         early_stopping_patience: int = 5,
         early_stopping_monitor: str = "validation_mse_scaled_loss",
         early_stopping_mode: str = "min",
