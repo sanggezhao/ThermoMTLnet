@@ -48,9 +48,9 @@ def _mols_to_desciptors(descriptors: List[Descriptor], rdkit_mols: List[rdchem.M
     Returns:
         np.array: Calculated descriptors.
     """
-    start = perf_counter()  # 使用 perf_counter() 记录当前时间，用于后续计算描述符时记录耗时
-    mordred_calc = Calculator(descriptors)  # Calculator是mordred库中的描述符计算器类
-    logger.info("Calculating descriptors")  # 输出日志信息，提示开始计算分子描述符
+    start = perf_counter()  
+    mordred_calc = Calculator(descriptors)  
+    logger.info("Calculating descriptors")  
     # mordred_descs = np.array(list(mordred_calc.map(rdkit_mols, nproc=psutil.cpu_count(logical=True), quiet=False)))
     mordred_descs = np.array(list(mordred_calc.map(rdkit_mols, nproc=1, quiet=False)))
     logger.info(f"Descriptor calculation complete, elapsed time: {str(datetime.timedelta(seconds=perf_counter() - start))}")
